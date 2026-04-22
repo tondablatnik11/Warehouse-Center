@@ -80,6 +80,216 @@ export function detectReportType(columns, fileName = '') {
 }
 
 /**
+ * Find the first column in `cols` (original names) that matches any of `keywords` (case-insensitive).
+ */
+function findCol(cols, keywords) {
+  return cols.find(c => {
+    const u = String(c).toUpperCase().trim();
+    return keywords.some(k => u.includes(k));
+  }) || null;
+}
+
+/**
+ * Maps raw Excel rows to database-compatible rows based on detected report type.
+ * Only includes columns that exist in our schema — ignores everything else.
+ */
+export function mapRowsForTable(type, rawRows) {
+  if (!rawRows || rawRows.length === 0) return [];
+  const cols = Object.keys(rawRows[0]);
+
+  const mappings = {
+    pick: () => {
+      const cTO = findCol(cols, ['TRANSFER ORDER', 'TRANSPORTAUFTRAG', 'PŘEPRAVNÍ PŘÍKAZ']);
+      const cMat = findCol(cols, ['MATERIAL', 'MATERIÁL']);
+      const cDel = findCol(cols, ['DELIVERY', 'LIEFERUNG', 'DODÁVKA']);
+      const cQty = findCol(cols, ['ACT.QTY', 'ISTMENGE', 'MNOŽSTVÍ']);
+      const cBin = findCol(cols, ['SOURCE STORAGE BIN', 'ZDROJ.SKLAD.MÍSTO', 'QUELL-LAGERPLATZ', 'ZDROJ']);
+      const cQueue = findCol(cols, ['QUEUE']);
+      const cRemoval = findCol(cols, ['REMOVAL SU', 'ODBĚR SU', 'ENTNAHME']);
+      const cDate = findCol(cols, ['CONFIRMATION DATE', 'DATUM POTVRZENÍ', 'BESTÄTIGUNGSDATUM', 'CONF.DATE']);
+      const cTime = findCol(cols, ['CONFIRMATION TIME', 'ČAS POTVRZENÍ', 'BESTÄTIGUNGSZEIT', 'CONF.TIME']);
+      const cUser = findCol(cols, ['USER', 'UŽIVATEL', 'BENUTZER']);
+      return rawRows.map(r => ({
+        transfer_order: cTO ? String(r[cTO] ?? '') : '',
+        material: cMat ? String(r[cMat] ?? '') : '',
+        delivery: cDel ? String(r[cDel] ?? '') : '',
+        qty: cQty ? parseFloat(r[cQty]) || 0 : 0,
+        source_bin: cBin ? String(r[cBin] ?? '') : '',
+        queue: cQueue ? String(r[cQueue] ?? 'N/A') : 'N/A',
+        removal_su: cRemoval ? String(r[cRemoval] ?? '') : '',
+        confirmation_date: cDate ? r[cDate] : null,
+        confirmation_time: cTime ? String(r[cTime] ?? '') : '',
+        user: cUser ? String(r[cUser] ?? '') : '',
+      }));
+    },
+    queue: () => {
+      const cTO = findCol(cols, ['TRANSFER ORDER', 'TRANSPORTAUFTRAG']);
+      const cQ = findCol(cols, ['QUEUE']);
+      const cSD = findCol(cols, ['SD DOCUMENT', 'SD-BELEG']);
+      const cDate = findCol(cols, ['CONFIRMATION DATE', 'DATUM']);
+      return rawRows.map(r => ({
+        transfer_order: cTO ? String(r[cTO] ?? '') : '',
+        queue: cQ ? String(r[cQ] ?? '') : '',
+        sd_document: cSD ? String(r[cSD] ?? '') : '',
+        confirmation_date: cDate ? r[cDate] : null,
+      }));
+    },
+    vekp: () => {
+      const cIHU = findCol(cols, ['INTERNAL', 'INTERNE', 'INTERNÍ']);
+      const cEHU = findCol(cols, ['EXTERNAL', 'EXTERNE', 'EXTERNÍ', 'HANDLING UNIT']);
+      const cPHU = findCol(cols, ['PARENT', 'ÜBERGEORD', 'NADŘAZENÁ']);
+      const cDel = findCol(cols, ['GENERATED DELIVERY', 'GENERIERTE', 'VYTVOŘENÁ DODÁVKA']);
+      const cPkg = findCol(cols, ['PACKAGING MATERIAL', 'VERPACKUNGSMATERIAL', 'OBALOVÝ MATERIÁL']);
+      const cW = findCol(cols, ['TOTAL WEIGHT', 'BRGEW', 'CELKOVÁ HMOTNOST']);
+      return rawRows.map(r => ({
+        internal_hu: cIHU ? String(r[cIHU] ?? '') : '',
+        external_hu: cEHU ? String(r[cEHU] ?? '') : '',
+        parent_hu: cPHU ? String(r[cPHU] ?? '') : '',
+        generated_delivery: cDel ? String(r[cDel] ?? '') : '',
+        packaging_material: cPkg ? String(r[cPkg] ?? '') : '',
+        total_weight: cW ? parseFloat(r[cW]) || 0 : 0,
+      }));
+    },
+    vepo: () => {
+      const cHU = findCol(cols, ['INTERNAL', 'INTERNE', 'INTERNÍ']);
+      const cMat = findCol(cols, ['MATERIAL', 'MATERIÁL']);
+      const cQty = findCol(cols, ['PACKED QUANTITY', 'VEMNG', 'BALENÉ MNOŽSTVÍ']);
+      return rawRows.map(r => ({
+        internal_hu: cHU ? String(r[cHU] ?? '') : '',
+        material: cMat ? String(r[cMat] ?? '') : '',
+        packed_qty: cQty ? parseFloat(r[cQty]) || 0 : 0,
+      }));
+    },
+    marm: () => {
+      const cMat = findCol(cols, ['MATERIAL', 'MATERIÁL']);
+      const cUnit = findCol(cols, ['ALTERNATIVE UNIT', 'ALTERNATIVNÍ', 'ALT.EINHEIT']);
+      const cNum = findCol(cols, ['NUMERATOR', 'ČITATEL', 'ZÄHLER']);
+      const cW = findCol(cols, ['GROSS WEIGHT', 'BRUTTOGEWICHT', 'HRUBÁ HMOTNOST']);
+      const cWU = findCol(cols, ['WEIGHT UNIT', 'GEWICHTSEINHEIT', 'JEDNOTKA HMOTNOSTI']);
+      const cL = findCol(cols, ['LENGTH', 'LÄNGE', 'DÉLKA']);
+      const cWi = findCol(cols, ['WIDTH', 'BREITE', 'ŠÍŘKA']);
+      const cH = findCol(cols, ['HEIGHT', 'HÖHE', 'VÝŠKA']);
+      const cDU = findCol(cols, ['DIMENSION UNIT', 'DIMENSIONSEINHeit', 'JEDNOTKA ROZMĚRU']);
+      return rawRows.map(r => ({
+        material: cMat ? String(r[cMat] ?? '') : '',
+        alt_unit: cUnit ? String(r[cUnit] ?? '') : '',
+        numerator: cNum ? parseFloat(r[cNum]) || 0 : 0,
+        gross_weight: cW ? parseFloat(r[cW]) || 0 : 0,
+        weight_unit: cWU ? String(r[cWU] ?? 'KG') : 'KG',
+        length: cL ? parseFloat(r[cL]) || 0 : 0,
+        width: cWi ? parseFloat(r[cWi]) || 0 : 0,
+        height: cH ? parseFloat(r[cH]) || 0 : 0,
+        dimension_unit: cDU ? String(r[cDU] ?? 'CM') : 'CM',
+      }));
+    },
+    lx03: () => {
+      const cBin = findCol(cols, ['STORAGE BIN', 'SKLADOVÉ MÍSTO', 'LAGERPLATZ']);
+      const cType = findCol(cols, ['STORAGE TYPE', 'TYP SKLAD', 'LAGERTYP', 'LGTYP']);
+      const cBT = findCol(cols, ['BIN TYPE', 'TYP MÍST', 'PLATZTYP', 'STORAGE BIN TYPE', 'TYP SKLAD.MÍSTA']);
+      const cMat = findCol(cols, ['MATERIAL', 'MATERIÁL']);
+      return rawRows.map(r => ({
+        storage_bin: cBin ? String(r[cBin] ?? '') : '',
+        storage_type: cType ? String(r[cType] ?? '') : '',
+        bin_type: cBT ? String(r[cBT] ?? '') : '',
+        material: cMat ? String(r[cMat] ?? '') : '',
+      }));
+    },
+    lt10: () => {
+      const cBin = findCol(cols, ['STORAGE BIN', 'SKLADOVÉ MÍSTO', 'LAGERPLATZ']);
+      const cBT = findCol(cols, ['BIN TYPE', 'TYP MÍST', 'PLATZTYP']);
+      const cMat = findCol(cols, ['MATERIAL', 'MATERIÁL']);
+      const cStock = findCol(cols, ['AVAILABLE STOCK', 'ZÁSOBA K DISP', 'VERFÜGBARER BESTAND']);
+      const cDate = findCol(cols, ['LAST MOVEMENT', 'POSLEDNÍ POHYB', 'LETZTE BEWEGUNG']);
+      const cType = findCol(cols, ['STORAGE TYPE', 'TYP SKLAD', 'LAGERTYP']);
+      return rawRows.map(r => ({
+        storage_bin: cBin ? String(r[cBin] ?? '') : '',
+        bin_type: cBT ? String(r[cBT] ?? '') : '',
+        material: cMat ? String(r[cMat] ?? '') : '',
+        available_stock: cStock ? parseFloat(r[cStock]) || 0 : 0,
+        last_movement: cDate ? r[cDate] : null,
+        storage_type: cType ? String(r[cType] ?? '') : '',
+      }));
+    },
+    oe_times: () => {
+      const cDN = findCol(cols, ['DN', 'DELIVERY', 'DODÁVKA']);
+      const cTime = findCol(cols, ['PROCESS', 'TIME', 'ČAS']);
+      const cCust = findCol(cols, ['CUSTOMER', 'ZÁKAZNÍK', 'KUNDE']);
+      const cMat = findCol(cols, ['MATERIAL', 'MATERIÁL']);
+      const cKLT = findCol(cols, ['KLT']);
+      const cPal = findCol(cols, ['PALET', 'PALETY']);
+      const cCart = findCol(cols, ['CARTON', 'KARTON']);
+      const cShift = findCol(cols, ['SHIFT', 'SMĚNA', 'SCHICHT']);
+      return rawRows.map(r => ({
+        dn_number: cDN ? String(r[cDN] ?? '') : '',
+        process_time: cTime ? String(r[cTime] ?? '') : '',
+        customer: cCust ? String(r[cCust] ?? '') : '',
+        material: cMat ? String(r[cMat] ?? '') : '',
+        klt: cKLT ? String(r[cKLT] ?? '') : '',
+        palety: cPal ? String(r[cPal] ?? '') : '',
+        cartons: cCart ? String(r[cCart] ?? '') : '',
+        shift: cShift ? String(r[cShift] ?? '') : '',
+      }));
+    },
+    categories: () => {
+      const cDel = findCol(cols, ['DELIVERY', 'LIEFERUNG', 'ZAKÁZKA', 'DODÁVKA']);
+      const cKat = findCol(cols, ['KATEGORIE', 'CATEGORY']);
+      const cArt = findCol(cols, ['ART', 'TYPE', 'TYP']);
+      return rawRows.map(r => ({
+        delivery: cDel ? String(r[cDel] ?? '') : '',
+        kategorie: cKat ? String(r[cKat] ?? '') : '',
+        art: cArt ? String(r[cArt] ?? '') : '',
+      }));
+    },
+    likp: () => {
+      const cDel = findCol(cols, ['DELIVERY', 'LIEFERUNG', 'DODÁVKA']);
+      const cShip = findCol(cols, ['SHIPPING POINT', 'VERSANDSTELLE', 'MÍSTO EXPEDICE']);
+      const cRecv = findCol(cols, ['RECEIVING', 'EMPFANGS', 'PŘIJÍMACÍ']);
+      return rawRows.map(r => ({
+        delivery: cDel ? String(r[cDel] ?? '') : '',
+        shipping_point: cShip ? String(r[cShip] ?? '') : '',
+        receiving_point: cRecv ? String(r[cRecv] ?? '') : '',
+      }));
+    },
+    deliveries: () => {
+      const cDel = findCol(cols, ['DELIVERY NO', 'DELIVERY', 'DODÁVKA']);
+      const cSt = findCol(cols, ['STATUS']);
+      const cType = findCol(cols, ['DEL TYPE', 'DELIVERY TYPE', 'TYP']);
+      const cLoad = findCol(cols, ['LOADING DATE', 'DATUM NAKLÁDKY']);
+      const cFwd = findCol(cols, ['FORWARDING', 'SPEDITÉR', 'AGENT']);
+      const cShip = findCol(cols, ['SHIP-TO', 'PŘÍJEMCE']);
+      const cW = findCol(cols, ['WEIGHT', 'HMOTNOST']);
+      const cBOL = findCol(cols, ['BILL OF LADING', 'PŘEPRAVNÍ DOKLAD']);
+      const cCountry = findCol(cols, ['COUNTRY', 'ZEMĚ']);
+      return rawRows.map(r => ({
+        delivery_no: cDel ? String(r[cDel] ?? '') : '',
+        status: cSt ? parseInt(r[cSt]) || 10 : 10,
+        del_type: cType ? String(r[cType] ?? '') : '',
+        loading_date: cLoad ? r[cLoad] : null,
+        forwarding_agent: cFwd ? String(r[cFwd] ?? '') : '',
+        ship_to_party: cShip ? String(r[cShip] ?? '') : '',
+        total_weight: cW ? parseFloat(r[cW]) || 0 : 0,
+        bill_of_lading: cBOL ? String(r[cBOL] ?? '') : '',
+        country: cCountry ? String(r[cCountry] ?? '') : '',
+      }));
+    },
+    manual: () => {
+      const cMat = findCol(cols, ['MATERIAL', 'MATERIÁL']);
+      const cPkg = findCol(cols, ['PACKAGING', 'BALENÍ', 'POPIS']);
+      const cBox = findCol(cols, ['BOX', 'KRABICE', 'SIZES']);
+      return rawRows.map(r => ({
+        material: cMat ? String(r[cMat] ?? '') : '',
+        packaging_desc: cPkg ? String(r[cPkg] ?? '') : '',
+        box_sizes: cBox ? String(r[cBox] ?? '') : null,
+      }));
+    },
+  };
+
+  const mapper = mappings[type];
+  if (!mapper) return rawRows; // fallback: return raw
+  return mapper();
+}
+
+/**
  * SAP report guide — which reports are needed for which section
  */
 export const SAP_REPORT_GUIDE = [
