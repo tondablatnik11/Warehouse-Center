@@ -4,7 +4,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { useUI } from '@/hooks/useUI';
 import { useData } from '@/hooks/useData';
 import SectionHeader from '@/components/shared/SectionHeader';
-import { detectReportType, SAP_REPORT_GUIDE } from '@/lib/sapFingerprint';
+import { detectReportType, mapRowsForTable, SAP_REPORT_GUIDE } from '@/lib/sapFingerprint';
 import {
   Upload, FileSpreadsheet, CheckCircle2, XCircle, AlertCircle,
   Info, ChevronDown, Loader2, HardDrive, BookOpen
@@ -77,30 +77,17 @@ export default function AdminTab() {
             return;
           }
 
-          // Normalize column names for database
-          const normalizedData = jsonData.map(row => {
-            const normalized = {};
-            Object.entries(row).forEach(([key, val]) => {
-              // Convert column names to snake_case
-              const snakeKey = key
-                .replace(/[()]/g, '')
-                .replace(/[.\s-]+/g, '_')
-                .replace(/_{2,}/g, '_')
-                .replace(/^_|_$/g, '')
-                .toLowerCase();
-              normalized[snakeKey] = val;
-            });
-            return normalized;
-          });
+          // Map columns to database schema
+          const mappedData = mapRowsForTable(detected.type, jsonData);
 
           resolve([{
             file: file.name,
             type: detected.type,
             label: detected.label,
             table: detected.table,
-            rows: normalizedData.length,
+            rows: mappedData.length,
             status: 'pending',
-            data: normalizedData,
+            data: mappedData,
           }]);
         } catch (error) {
           resolve([{ file: file.name, status: 'error', message: error.message }]);
