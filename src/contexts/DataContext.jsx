@@ -99,7 +99,7 @@ export const DataProvider = ({ children }) => {
         const chunk = data.slice(i, i + BATCH_SIZE);
         const { error } = await supabase
           .from(tableName)
-          .upsert(chunk, { onConflict: 'id', ignoreDuplicates: false });
+          .insert(chunk);
         if (error) throw error;
       }
 
