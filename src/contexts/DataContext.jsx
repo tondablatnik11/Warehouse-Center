@@ -32,26 +32,27 @@ export const DataProvider = ({ children }) => {
     setIsLoading(true);
     try {
       const tables = [
-        { name: 'pick_data', setter: setPickData, limit: 100000 },
-        { name: 'deliveries', setter: setDeliveriesData, limit: 100000 },
-        { name: 'queue_data', setter: setQueueData, limit: 20000 },
-        { name: 'marm_data', setter: setMarmData, limit: 30000 },
-        { name: 'manual_master', setter: setManualMaster, limit: 5000 },
-        { name: 'vekp_data', setter: setVekpData, limit: 100000 },
-        { name: 'vepo_data', setter: setVepoData, limit: 100000 },
-        { name: 'oe_times_data', setter: setOeTimesData, limit: 20000 },
-        { name: 'categories_data', setter: setCategoriesData, limit: 10000 },
-        { name: 'lx03_data', setter: (d) => setWarehouseData(prev => ({ ...prev, lx03: d })), limit: 50000 },
-        { name: 'lt10_data', setter: (d) => setWarehouseData(prev => ({ ...prev, lt10: d })), limit: 50000 },
-        { name: 'import_log', setter: setImportLog, limit: 100 },
+        { name: 'pick_data', setter: setPickData, limit: 100000, orderCol: 'created_at' },
+        { name: 'deliveries', setter: setDeliveriesData, limit: 100000, orderCol: 'created_at' },
+        { name: 'queue_data', setter: setQueueData, limit: 20000, orderCol: 'created_at' },
+        { name: 'marm_data', setter: setMarmData, limit: 30000, orderCol: 'created_at' },
+        { name: 'manual_master', setter: setManualMaster, limit: 5000, orderCol: 'created_at' },
+        { name: 'vekp_data', setter: setVekpData, limit: 100000, orderCol: 'created_at' },
+        { name: 'vepo_data', setter: setVepoData, limit: 100000, orderCol: 'created_at' },
+        { name: 'oe_times_data', setter: setOeTimesData, limit: 20000, orderCol: 'created_at' },
+        { name: 'categories_data', setter: setCategoriesData, limit: 10000, orderCol: 'created_at' },
+        { name: 'lx03_data', setter: (d) => setWarehouseData(prev => ({ ...prev, lx03: d })), limit: 50000, orderCol: 'created_at' },
+        { name: 'lt10_data', setter: (d) => setWarehouseData(prev => ({ ...prev, lt10: d })), limit: 50000, orderCol: 'created_at' },
+        // import_log má sloupec imported_at, nikoliv created_at!
+        { name: 'import_log', setter: setImportLog, limit: 100, orderCol: 'imported_at' },
       ];
 
       const results = await Promise.allSettled(
-        tables.map(async ({ name, limit }) => {
+        tables.map(async ({ name, limit, orderCol }) => {
           const { data, error } = await supabase
             .from(name)
             .select('*')
-            .order('created_at', { ascending: false })
+            .order(orderCol, { ascending: false })
             .limit(limit);
           if (error) throw { table: name, error };
           return { table: name, data: data || [] };
@@ -85,52 +86,30 @@ export const DataProvider = ({ children }) => {
 
     try {
       if (!append) {
+        // Delete existing data if replacing
         const { error: deleteError } = await supabase
           .from(tableName)
           .delete()
-          .neq('id', 0);
+          .neq('id', 0); // Delete all rows
         if (deleteError) throw deleteError;
       }
 
-      let preparedData = data;
-      
-      if (tableName === 'deliveries') {
-        const uniqueDeliveries = new Map();
-        data.forEach(item => {
-          if (item.delivery_no && item.delivery_no.trim() !== '') {
-            uniqueDeliveries.set(item.delivery_no, item);
-          }
-        });
-        preparedData = Array.from(uniqueDeliveries.values());
-        
-        if (preparedData.length < data.length) {
-          console.warn(`Deduplikace: Z původních ${data.length} řádků zůstalo ${preparedData.length} unikátních zakázek.`);
-        }
-      }
-
+      // Batch insert in chunks of 1000 (standard insert bez upsertu a deduplikace)
       const BATCH_SIZE = 1000;
-      for (let i = 0; i < preparedData.length; i += BATCH_SIZE) {
-        const chunk = preparedData.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < data.length; i += BATCH_SIZE) {
+        const chunk = data.slice(i, i + BATCH_SIZE);
         
-        let error;
-        if (tableName === 'deliveries') {
-          const { error: upsertError } = await supabase
-            .from(tableName)
-            .upsert(chunk, { onConflict: 'delivery_no' });
-          error = upsertError;
-        } else {
-          const { error: insertError } = await supabase
-            .from(tableName)
-            .insert(chunk);
-          error = insertError;
-        }
+        const { error: insertError } = await supabase
+          .from(tableName)
+          .insert(chunk);
 
-        if (error) throw error;
+        if (insertError) throw insertError;
       }
 
+      // Log the import
       await supabase.from('import_log').insert([{
         table_name: tableName,
-        row_count: preparedData.length,
+        row_count: data.length,
         imported_at: new Date().toISOString(),
         mode: append ? 'append' : 'replace'
       }]);
