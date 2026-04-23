@@ -34,36 +34,27 @@ export default function AdminTab() {
         const XLSX = await import('xlsx');
         const buf = await file.arrayBuffer();
         
-        // Step 1: Read only header to detect type (first 5 rows)
-        const wbHeader = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: false, sheetRows: 5 });
-        const wsHeader = wbHeader.Sheets[wbHeader.SheetNames[0]];
-        const headerData = XLSX.utils.sheet_to_json(wsHeader, { defval: '' });
+        // Single-pass: read full file at once (two-pass causes buffer issues)
+        const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: false });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(ws, { defval: '' });
         
-        if (headerData.length === 0) {
-          return [{ file: file.name, status: 'error', message: `Velký soubor (${Math.round(fileSizeMB)}MB) — prázdný.` }];
+        if (!jsonData || jsonData.length === 0) {
+          return [{ file: file.name, status: 'error', message: `Velký soubor (${Math.round(fileSizeMB)}MB) — nepodařilo se načíst. Zkuste rozdělit na menší části.` }];
         }
         
-        const columns = Object.keys(headerData[0]);
+        const columns = Object.keys(jsonData[0]);
         const detected = detectReportType(columns, file.name);
         if (!detected) {
           return [{ file: file.name, status: 'error', message: t.notRecognized, columns: columns.slice(0, 10).join(', ') }];
         }
         
-        toast.success(`📋 Detekováno: ${detected.label}. Načítám data...`);
+        toast.success(`📋 ${detected.label}: ${jsonData.length.toLocaleString('cs-CZ')} řádků. Mapuji sloupce...`);
         
-        // Step 2: Read full file — this is memory-intensive but unavoidable
-        const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: false });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        
-        if (jsonData.length === 0) {
-          return [{ file: file.name, status: 'error', message: 'Nepodařilo se načíst data.' }];
-        }
-        
-        // Step 3: Map to only needed columns (reduces memory significantly)
+        // Map to only needed columns (reduces memory: LIKP 206→11 cols)
         const mappedData = mapRowsForTable(detected.type, jsonData);
         
-        toast.success(`✅ ${mappedData.length.toLocaleString('cs-CZ')} řádků zpracováno. Nahrávám do databáze...`);
+        toast.success(`✅ Zpracováno. Nahrávám do databáze...`);
         
         return [{
           file: file.name,
