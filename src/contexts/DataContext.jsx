@@ -85,7 +85,7 @@ export const DataProvider = ({ children }) => {
 
     try {
       if (!append) {
-        // Delete existing data
+        // Delete existing data if replacing
         const { error: deleteError } = await supabase
           .from(tableName)
           .delete()
@@ -93,20 +93,49 @@ export const DataProvider = ({ children }) => {
         if (deleteError) throw deleteError;
       }
 
-      // Batch insert in chunks of 500 (Supabase limit optimization)
+      // 1. Předzpracování a deduplikace dat pro specifické tabulky
+      let preparedData = data;
+      
+      if (tableName === 'deliveries') {
+        const uniqueDeliveries = new Map();
+        data.forEach(item => {
+          if (item.delivery_no) {
+            // Pokud excel obsahuje stejné delivery_no vícekrát, 
+            // zachováme vždy ten poslední výskyt.
+            uniqueDeliveries.set(item.delivery_no, item);
+          }
+        });
+        preparedData = Array.from(uniqueDeliveries.values());
+      }
+
+      // 2. Dávkové ukládání (Batch insert) v blocích po 500 řádcích
       const BATCH_SIZE = 500;
-      for (let i = 0; i < data.length; i += BATCH_SIZE) {
-        const chunk = data.slice(i, i + BATCH_SIZE);
-        const { error } = await supabase
-          .from(tableName)
-          .insert(chunk);
+      for (let i = 0; i < preparedData.length; i += BATCH_SIZE) {
+        const chunk = preparedData.slice(i, i + BATCH_SIZE);
+        
+        let error;
+        if (tableName === 'deliveries') {
+          // Použijeme UPSERT (Update/Insert) s klíčem delivery_no.
+          // Pokud zakázka už existuje, její data se zaktualizují.
+          const { error: upsertError } = await supabase
+            .from(tableName)
+            .upsert(chunk, { onConflict: 'delivery_no' });
+          error = upsertError;
+        } else {
+          // Pro ostatní tabulky ponecháme standardní INSERT
+          const { error: insertError } = await supabase
+            .from(tableName)
+            .insert(chunk);
+          error = insertError;
+        }
+
         if (error) throw error;
       }
 
-      // Log the import
+      // 3. Logování úspěšného importu
       await supabase.from('import_log').insert([{
         table_name: tableName,
-        row_count: data.length,
+        row_count: preparedData.length,
         imported_at: new Date().toISOString(),
         mode: append ? 'append' : 'replace'
       }]);
