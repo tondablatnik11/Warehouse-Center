@@ -30,7 +30,8 @@ export default function AdminTab() {
       reader.onload = async (evt) => {
         try {
           const data = new Uint8Array(evt.target.result);
-          const wb = XLSX.read(data, { type: 'array', cellDates: true });
+          const isLarge = file.size > 20 * 1024 * 1024; // > 20MB
+          const wb = XLSX.read(data, { type: 'array', cellDates: false });
 
           // Handle Auswertung (multi-sheet)
           if (fname.includes('auswertung')) {
