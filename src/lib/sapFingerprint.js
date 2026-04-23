@@ -102,6 +102,40 @@ function findCol(cols, keywords) {
 }
 
 /**
+ * Sanitize date values for PostgreSQL DATE columns.
+ * Handles: empty strings, Excel serial numbers, Date objects, ISO strings, partial dates like "21.11."
+ */
+function cleanDate(val) {
+  if (val === null || val === undefined) return null;
+  if (val === '' || val === 0) return null;
+
+  // Already a Date object (xlsx cellDates: true)
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return null;
+    return val.toISOString().split('T')[0];
+  }
+
+  // Excel serial number (number > 1000 = likely a date serial)
+  if (typeof val === 'number' && val > 1000) {
+    const d = new Date((val - 25569) * 86400000);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString().split('T')[0];
+  }
+
+  // String date — try parsing
+  const s = String(val).trim();
+  if (!s || s.length < 4) return null; // too short, e.g. "21.11."
+
+  // Try ISO parse
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime()) && s.length >= 8) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return null;
+}
+
+/**
  * Maps raw Excel rows to database-compatible rows.
  */
 export function mapRowsForTable(type, rawRows) {
@@ -133,7 +167,7 @@ export function mapRowsForTable(type, rawRows) {
         source_bin: cBin ? String(r[cBin] ?? '') : '',
         queue: cQueue ? String(r[cQueue] ?? 'N/A') : 'N/A',
         removal_su: cRemoval ? String(r[cRemoval] ?? '') : '',
-        confirmation_date: cDate ? r[cDate] : null,
+        confirmation_date: cDate ? cleanDate(r[cDate]) : null,
         confirmation_time: cTime ? String(r[cTime] ?? '') : '',
         "user": cUser ? String(r[cUser] ?? '') : '',
         weight: cWeight ? parseFloat(r[cWeight]) || 0 : 0,
@@ -155,9 +189,9 @@ export function mapRowsForTable(type, rawRows) {
         transfer_order: cTO ? String(r[cTO] ?? '') : '',
         queue: cQ ? String(r[cQ] ?? '') : '',
         sd_document: cSD ? String(r[cSD] ?? '') : '',
-        confirmation_date: cConfDate ? r[cConfDate] : null,
-        creation_date: cCreDate ? r[cCreDate] : null,
-        delivery_date: cDelDate ? r[cDelDate] : null,
+        confirmation_date: cConfDate ? cleanDate(r[cConfDate]) : null,
+        creation_date: cCreDate ? cleanDate(r[cCreDate]) : null,
+        delivery_date: cDelDate ? cleanDate(r[cDelDate]) : null,
         to_type: cTOType ? String(r[cTOType] ?? '') : '',
       }));
     },
@@ -179,7 +213,7 @@ export function mapRowsForTable(type, rawRows) {
         packaging_material: cPkg ? String(r[cPkg] ?? '') : '',
         total_weight: cW ? parseFloat(r[cW]) || 0 : 0,
         shipping_point: cShipPt ? String(r[cShipPt] ?? '') : '',
-        created_on: cCreated ? r[cCreated] : null,
+        created_on: cCreated ? cleanDate(r[cCreated]) : null,
         forwarding_agent: cFwd ? String(r[cFwd] ?? '') : '',
       }));
     },
@@ -242,7 +276,7 @@ export function mapRowsForTable(type, rawRows) {
         available_stock: cStock ? parseFloat(r[cStock]) || 0 : 0,
         empty_indicator: cEmpty ? String(r[cEmpty] ?? '') : '',
         su_type: cSUType ? String(r[cSUType] ?? '') : '',
-        last_movement: cLastMov ? r[cLastMov] : null,
+        last_movement: cLastMov ? cleanDate(r[cLastMov]) : null,
         picking_area: cPickArea ? String(r[cPickArea] ?? '') : '',
         zone: cZone ? String(r[cZone] ?? '') : '',
       }));
@@ -260,7 +294,7 @@ export function mapRowsForTable(type, rawRows) {
         bin_type: cBT ? String(r[cBT] ?? '') : '',
         material: cMat ? String(r[cMat] ?? '') : '',
         available_stock: cStock ? parseFloat(r[cStock]) || 0 : 0,
-        last_movement: cDate ? r[cDate] : null,
+        last_movement: cDate ? cleanDate(r[cDate]) : null,
         storage_type: cType ? String(r[cType] ?? '') : '',
       }));
     },
@@ -289,8 +323,8 @@ export function mapRowsForTable(type, rawRows) {
       return rawRows.map(r => ({
         delivery_no: cDel ? String(r[cDel] ?? '') : '',
         status: cStatus ? parseInt(r[cStatus]) || 0 : 0,
-        delivery_date: cDelDate ? r[cDelDate] : null,
-        loading_date: cLoadDate ? r[cLoadDate] : null,
+        delivery_date: cDelDate ? cleanDate(r[cDelDate]) : null,
+        loading_date: cLoadDate ? cleanDate(r[cLoadDate]) : null,
         forwarding_agent: cFwd ? String(r[cFwd] ?? '') : '',
         ship_to_party: cShipTo ? String(r[cShipTo] ?? '') : '',
         ship_to_name: cShipToName ? String(r[cShipToName] ?? '') : '',
@@ -304,7 +338,7 @@ export function mapRowsForTable(type, rawRows) {
         bill_of_lading: cBOL ? String(r[cBOL] ?? '') : '',
         order_type: cOrdType ? String(r[cOrdType] ?? '') : '',
         shipping_type: cShipType ? String(r[cShipType] ?? '') : '',
-        creation_date: cCreDate ? r[cCreDate] : null,
+        creation_date: cCreDate ? cleanDate(r[cCreDate]) : null,
         num_items: cItems ? parseInt(r[cItems]) || 0 : 0,
       }));
     },
@@ -329,9 +363,9 @@ export function mapRowsForTable(type, rawRows) {
       return rawRows.map(r => ({
         dn_number: cDN ? String(r[cDN] ?? '') : '',
         customer: cCust ? String(r[cCust] ?? '') : '',
-        start_time: cStart ? r[cStart] : null,
-        end_time: cEnd ? r[cEnd] : null,
-        date: cDate ? r[cDate] : null,
+        start_time: cStart ? cleanDate(r[cStart]) : null,
+        end_time: cEnd ? cleanDate(r[cEnd]) : null,
+        date: cDate ? cleanDate(r[cDate]) : null,
         process_time: cProcTime ? String(r[cProcTime] ?? '') : '',
         effort_time: cEffort ? String(r[cEffort] ?? '') : '',
         shift: cShift ? String(r[cShift] ?? '') : '',
@@ -372,14 +406,14 @@ export function mapRowsForTable(type, rawRows) {
         delivery: cDel ? String(r[cDel] ?? '') : '',
         shipping_point: cShip ? String(r[cShip] ?? '') : '',
         delivery_type: cDelType ? String(r[cDelType] ?? '') : '',
-        loading_date: cLoadDate ? r[cLoadDate] : null,
-        delivery_date: cDelDate ? r[cDelDate] : null,
+        loading_date: cLoadDate ? cleanDate(r[cLoadDate]) : null,
+        delivery_date: cDelDate ? cleanDate(r[cDelDate]) : null,
         ship_to_party: cShipTo ? String(r[cShipTo] ?? '') : '',
         sold_to_party: cSoldTo ? String(r[cSoldTo] ?? '') : '',
         total_weight: cWeight ? parseFloat(r[cWeight]) || 0 : 0,
         bill_of_lading: cBOL ? String(r[cBOL] ?? '') : '',
         shipping_type: cShipType ? String(r[cShipType] ?? '') : '',
-        actual_gi_date: cActDate ? r[cActDate] : null,
+        actual_gi_date: cActDate ? cleanDate(r[cActDate]) : null,
       }));
     },
     manual: () => {
