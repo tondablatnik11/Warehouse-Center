@@ -25,34 +25,58 @@ export default function AdminTab() {
     const fname = file.name.toLowerCase();
     const fileSizeMB = file.size / (1024 * 1024);
 
-    // LARGE FILES (>15MB): Send directly to server API — no browser parsing
+
+    // LARGE FILES (>15MB): Parse in browser but with memory-efficient approach
     if (fileSizeMB > 15) {
-      toast(`⏳ Velký soubor (${Math.round(fileSizeMB)}MB) — posílám na server...`, { duration: 15000, icon: '📊' });
-      
-      const serverFormData = new FormData();
-      serverFormData.append('file', file);
-      serverFormData.append('append', appendMode ? 'true' : 'false');
+      toast(`⏳ Velký soubor (${Math.round(fileSizeMB)}MB) — zpracovávám...`, { duration: 20000, icon: '📊' });
       
       try {
-        const resp = await fetch('/api/parse-xlsx', { method: 'POST', body: serverFormData });
-        const result = await resp.json();
+        const XLSX = await import('xlsx');
+        const buf = await file.arrayBuffer();
         
-        if (!resp.ok) {
-          return [{ file: file.name, status: 'error', message: result.error || `Server error (${resp.status})` }];
+        // Step 1: Read only header to detect type (first 5 rows)
+        const wbHeader = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: false, sheetRows: 5 });
+        const wsHeader = wbHeader.Sheets[wbHeader.SheetNames[0]];
+        const headerData = XLSX.utils.sheet_to_json(wsHeader, { defval: '' });
+        
+        if (headerData.length === 0) {
+          return [{ file: file.name, status: 'error', message: `Velký soubor (${Math.round(fileSizeMB)}MB) — prázdný.` }];
         }
+        
+        const columns = Object.keys(headerData[0]);
+        const detected = detectReportType(columns, file.name);
+        if (!detected) {
+          return [{ file: file.name, status: 'error', message: t.notRecognized, columns: columns.slice(0, 10).join(', ') }];
+        }
+        
+        toast.success(`📋 Detekováno: ${detected.label}. Načítám data...`);
+        
+        // Step 2: Read full file — this is memory-intensive but unavoidable
+        const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: false });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        
+        if (jsonData.length === 0) {
+          return [{ file: file.name, status: 'error', message: 'Nepodařilo se načíst data.' }];
+        }
+        
+        // Step 3: Map to only needed columns (reduces memory significantly)
+        const mappedData = mapRowsForTable(detected.type, jsonData);
+        
+        toast.success(`✅ ${mappedData.length.toLocaleString('cs-CZ')} řádků zpracováno. Nahrávám do databáze...`);
         
         return [{
           file: file.name,
-          type: result.type,
-          label: result.label,
-          table: result.table,
-          rows: result.inserted || result.rows,
-          status: 'success',
-          uploadedDirectly: true,
-          serverErrors: result.errors,
+          type: detected.type,
+          label: detected.label,
+          table: detected.table,
+          rows: mappedData.length,
+          status: 'pending',
+          data: mappedData,
         }];
       } catch (err) {
-        return [{ file: file.name, status: 'error', message: `Server chyba: ${err.message}` }];
+        console.error('Large file error:', err);
+        return [{ file: file.name, status: 'error', message: `Soubor příliš velký (${Math.round(fileSizeMB)}MB). ${err.message || 'Zkuste rozdělit na menší části.'}` }];
       }
     }
 
