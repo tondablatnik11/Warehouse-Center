@@ -62,7 +62,7 @@ export function detectReportType(columns, fileName = '') {
   if (isLx03) return { type: 'lx03', label: 'LX03 (Kapacita skladu)', table: 'lx03_data' };
 
   // Deliveries (Orders) — has Delivery No + Status
-  const isDeliveries = cols.some(c => c.includes('DELIVERY NO') || c.includes('DELIVERY'))
+  const isDeliveries = cols.some(c => c.includes('DELIVERY NO') || c.includes('DELIVERY') || c.includes('DODÁVKA'))
     && cols.some(c => c === 'STATUS');
   if (isDeliveries) return { type: 'deliveries', label: 'Deliveries (Zakázky)', table: 'deliveries' };
 
@@ -77,6 +77,17 @@ export function detectReportType(columns, fileName = '') {
   }
 
   return null;
+}
+
+/**
+ * Zkusí najít PŘESNOU shodu názvu sloupce.
+ * To zabraňuje chybám, kdy "Creation date delivery" zablokuje vyhledávání pro "Delivery".
+ */
+function findExact(cols, exactNames) {
+  return cols.find(c => {
+    const u = String(c).toUpperCase().trim();
+    return exactNames.includes(u);
+  }) || null;
 }
 
 /**
@@ -251,15 +262,24 @@ export function mapRowsForTable(type, rawRows) {
       }));
     },
     deliveries: () => {
-      const cDel = findCol(cols, ['DELIVERY NO', 'DELIVERY', 'DODÁVKA']);
-      const cSt = findCol(cols, ['STATUS']);
-      const cType = findCol(cols, ['DEL TYPE', 'DELIVERY TYPE', 'TYP']);
-      const cLoad = findCol(cols, ['LOADING DATE', 'DATUM NAKLÁDKY']);
-      const cFwd = findCol(cols, ['FORWARDING', 'SPEDITÉR', 'AGENT']);
-      const cShip = findCol(cols, ['SHIP-TO', 'PŘÍJEMCE']);
-      const cW = findCol(cols, ['WEIGHT', 'HMOTNOST']);
+      // 1. ZDE JE OPRAVA: Nejprve hledáme přesnou shodu s 'DELIVERY', až pak benevolentně
+      const cDel = findExact(cols, ['DELIVERY', 'DELIVERY NO', 'DODÁVKA']) || findCol(cols, ['DELIVERY NO', 'DODÁVKA']);
+      
+      const cSt = findExact(cols, ['STATUS', 'DELIVERY STATUS']) || findCol(cols, ['STATUS']);
+      const cType = findCol(cols, ['ORDER TYPE', 'DEL TYPE', 'DELIVERY TYPE', 'TYP']);
+      
+      // Z tvého souboru jsme našli 'Delivery Date' (nebo 'Pland Gds Mvmnt Date') 
+      const cLoad = findCol(cols, ['DELIVERY DATE', 'LOADING DATE', 'DATUM NAKLÁDKY', 'PLAND GDS MVMNT DATE']);
+      
+      const cFwd = findCol(cols, ['FORWARDING AGENT NAME', 'FORWARDING', 'SPEDITÉR', 'AGENT']);
+      
+      // 2. ZDE JE OPRAVA: Zabraňujeme chybnému označení 'Country ship-to prty' jako jména klienta
+      const cShip = findExact(cols, ['SHIP-TO PARTY', 'PŘÍJEMCE']) || findCol(cols, ['SHIP-TO']);
+      
+      const cW = findExact(cols, ['TOTAL WEIGHT']) || findCol(cols, ['WEIGHT', 'HMOTNOST']);
       const cBOL = findCol(cols, ['BILL OF LADING', 'PŘEPRAVNÍ DOKLAD']);
-      const cCountry = findCol(cols, ['COUNTRY', 'ZEMĚ']);
+      const cCountry = findExact(cols, ['COUNTRY SHIP-TO PRTY']) || findCol(cols, ['COUNTRY', 'ZEMĚ']);
+
       return rawRows.map(r => ({
         delivery_no: cDel ? String(r[cDel] ?? '') : '',
         status: cSt ? parseInt(r[cSt]) || 10 : 10,
