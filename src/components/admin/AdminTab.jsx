@@ -22,15 +22,48 @@ export default function AdminTab() {
   const fileInputRef = useRef(null);
 
   const processFile = useCallback(async (file) => {
-    const XLSX = await import('xlsx');
     const fname = file.name.toLowerCase();
+    const fileSizeMB = file.size / (1024 * 1024);
 
+    // LARGE FILES (>15MB): Send directly to server API — no browser parsing
+    if (fileSizeMB > 15) {
+      toast(`⏳ Velký soubor (${Math.round(fileSizeMB)}MB) — posílám na server...`, { duration: 15000, icon: '📊' });
+      
+      const serverFormData = new FormData();
+      serverFormData.append('file', file);
+      serverFormData.append('append', appendMode ? 'true' : 'false');
+      
+      try {
+        const resp = await fetch('/api/parse-xlsx', { method: 'POST', body: serverFormData });
+        const result = await resp.json();
+        
+        if (!resp.ok) {
+          return [{ file: file.name, status: 'error', message: result.error || `Server error (${resp.status})` }];
+        }
+        
+        return [{
+          file: file.name,
+          type: result.type,
+          label: result.label,
+          table: result.table,
+          rows: result.inserted || result.rows,
+          status: 'success',
+          uploadedDirectly: true,
+          serverErrors: result.errors,
+        }];
+      } catch (err) {
+        return [{ file: file.name, status: 'error', message: `Server chyba: ${err.message}` }];
+      }
+    }
+
+    // NORMAL FILES (<15MB): Parse in browser
+    const XLSX = await import('xlsx');
+    
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = async (evt) => {
         try {
           const data = new Uint8Array(evt.target.result);
-          const isLarge = file.size > 20 * 1024 * 1024; // > 20MB
           const wb = XLSX.read(data, { type: 'array', cellDates: false });
 
           // Handle Auswertung (multi-sheet)
@@ -78,7 +111,6 @@ export default function AdminTab() {
             return;
           }
 
-          // Map columns to database schema
           const mappedData = mapRowsForTable(detected.type, jsonData);
 
           resolve([{
@@ -96,7 +128,7 @@ export default function AdminTab() {
       };
       reader.readAsArrayBuffer(file);
     });
-  }, [t]);
+  }, [t, appendMode]);
 
   const handleFiles = useCallback(async (files) => {
     setIsProcessing(true);
